@@ -1,0 +1,161 @@
+{
+  "generatedAt": "2026-09-16T12:18:07.929Z",
+  "latencyTargetMs": 10000,
+  "summary": {
+    "passed": 12,
+    "total": 12,
+    "refusalsWithPrimaryClaims": 0,
+    "medianLatencyMs": 18086,
+    "maxLatencyMs": 342079,
+    "overLatencyTarget": 11
+  },
+  "rows": [
+    {
+      "id": "OC1",
+      "query": "How do I file my income tax return in India?",
+      "group": "out-of-corpus",
+      "outcome": "refused_out_of_scope",
+      "refused": true,
+      "expectedRefusal": true,
+      "pass": true,
+      "latencyMs": 15585,
+      "citedStandards": []
+    },
+    {
+      "id": "OC2",
+      "query": "best recipe for chocolate chip cookies",
+      "group": "out-of-corpus",
+      "outcome": "refused_out_of_scope",
+      "refused": true,
+      "expectedRefusal": true,
+      "pass": true,
+      "latencyMs": 14469,
+      "citedStandards": []
+    },
+    {
+      "id": "OC3",
+      "query": "how to sort a list in Python",
+      "group": "out-of-corpus",
+      "outcome": "refused_out_of_scope",
+      "refused": true,
+      "expectedRefusal": true,
+      "pass": true,
+      "latencyMs": 14124,
+      "citedStandards": []
+    },
+    {
+      "id": "OC4",
+      "query": "turbine blade coatings for aircraft jet engines",
+      "group": "out-of-corpus",
+      "outcome": "refused_insufficient_evidence",
+      "refused": true,
+      "expectedRefusal": true,
+      "pass": true,
+      "latencyMs": 15690,
+      "citedStandards": []
+    },
+    {
+      "id": "OC5",
+      "query": "semiconductor photolithography mask alignment tolerance",
+      "group": "out-of-corpus",
+      "outcome": "refused_out_of_scope",
+      "refused": true,
+      "expectedRefusal": true,
+      "pass": true,
+      "latencyMs": 4480,
+      "citedStandards": []
+    },
+    {
+      "id": "IC1",
+      "query": "What are the requirements for packaged drinking water?",
+      "group": "in-corpus",
+      "outcome": "answered",
+      "refused": false,
+      "expectedRefusal": false,
+      "pass": true,
+      "latencyMs": 342079,
+      "citedStandards": [
+        "IS 14543:2016",
+        "IS 13428:2005"
+      ]
+    },
+    {
+      "id": "IC2",
+      "query": "stainless steel cookware specification",
+      "group": "in-corpus",
+      "outcome": "answered",
+      "refused": false,
+      "expectedRefusal": false,
+      "pass": true,
+      "latencyMs": 18279,
+      "citedStandards": [
+        "IS 14756:2017"
+      ]
+    },
+    {
+      "id": "IC3",
+      "query": "protective helmet for two wheeler riders",
+      "group": "in-corpus",
+      "outcome": "answered",
+      "refused": false,
+      "expectedRefusal": false,
+      "pass": true,
+      "latencyMs": 18116,
+      "citedStandards": [
+        "IS 4151:2015"
+      ]
+    },
+    {
+      "id": "IC4",
+      "query": "ordinary portland cement grade requirements",
+      "group": "in-corpus",
+      "outcome": "answered",
+      "refused": false,
+      "expectedRefusal": false,
+      "pass": true,
+      "latencyMs": 41821,
+      "citedStandards": [
+        "IS 269:2015"
+      ]
+    },
+    {
+      "id": "IC5",
+      "query": "unplasticized PVC pipes for water supply",
+      "group": "in-corpus",
+      "outcome": "answered",
+      "refused": false,
+      "expectedRefusal": false,
+      "pass": true,
+      "latencyMs": 15704,
+      "citedStandards": [
+        "IS 4985:2021"
+      ]
+    },
+    {
+      "id": "IC6",
+      "query": "safety requirements for toys",
+      "group": "in-corpus",
+      "outcome": "answered",
+      "refused": false,
+      "expectedRefusal": false,
+      "pass": true,
+      "latencyMs": 18086,
+      "citedStandards": [
+        "IS 9873 (Part 1):2019"
+      ]
+    },
+    {
+      "id": "IC7",
+      "query": "concrete paving blocks",
+      "group": "in-corpus",
+      "outcome": "answered",
+      "refused": false,
+      "expectedRefusal": false,
+      "pass": true,
+      "latencyMs": 21816,
+      "citedStandards": [
+        "IS 15658:2021"
+      ]
+    }
+  ]
+}

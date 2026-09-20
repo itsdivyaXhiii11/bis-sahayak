@@ -1,0 +1,154 @@
+import type { ReactElement } from "react";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { SearchOverlay } from "./SearchOverlay";
+import { LanguageProvider } from "@/components/providers/LanguageProvider";
+
+const pushMock = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock }),
+}));
+
+// SearchOverlay now renders a VoiceInputButton (src/components/query/
+// VoiceInputButton.tsx), which reads the current language via useLanguage()
+// — so every render needs a LanguageProvider ancestor, same as
+// HomeClient.test.tsx already does for the homepage.
+function renderOverlay(ui: ReactElement) {
+  return render(<LanguageProvider>{ui}</LanguageProvider>);
+}
+
+beforeEach(() => {
+  pushMock.mockClear();
+  global.fetch = vi.fn();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("SearchOverlay", () => {
+  test("renders nothing when closed", () => {
+    renderOverlay(<SearchOverlay open={false} onClose={() => {}} />);
+    expect(screen.queryByPlaceholderText("Search BIS Standards, Services & Documents")).not.toBeInTheDocument();
+  });
+
+  test("renders the search input, example, and section shortcut links in the empty state", () => {
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    expect(screen.getByPlaceholderText("Search BIS Standards, Services & Documents")).toBeInTheDocument();
+    expect(screen.getByText("Try asking")).toBeInTheDocument();
+    expect(screen.getByText("Browse by section")).toBeInTheDocument();
+    for (const label of ["Standards", "Certification", "Testing", "Search Documents", "Compare"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+  });
+
+  test("never labels itself as an AI chat interface", () => {
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    expect(screen.queryByText(/chat with ai/i)).not.toBeInTheDocument();
+  });
+
+  test("submitting a typed query navigates to the AI Assistant and closes the overlay", () => {
+    const onClose = vi.fn();
+    renderOverlay(<SearchOverlay open onClose={onClose} />);
+    const input = screen.getByPlaceholderText("Search BIS Standards, Services & Documents");
+    fireEvent.change(input, { target: { value: "some random keyword" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(pushMock).toHaveBeenCalledWith("/?q=some%20random%20keyword");
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  test("section shortcut links navigate to their real routes, not submit as search queries", () => {
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    const certLink = screen.getByText("Certification").closest("a");
+    expect(certLink).toHaveAttribute("href", "/certification");
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  test("submitting an empty query does not navigate", () => {
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    const input = screen.getByPlaceholderText("Search BIS Standards, Services & Documents");
+    fireEvent.submit(input.closest("form")!);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  test("the close button calls onClose", () => {
+    const onClose = vi.fn();
+    renderOverlay(<SearchOverlay open onClose={onClose} />);
+    fireEvent.click(screen.getByLabelText("Close search"));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  test("Escape key calls onClose", () => {
+    const onClose = vi.fn();
+    renderOverlay(<SearchOverlay open onClose={onClose} />);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  test("typing an exact standard identifier shows it as an instant deterministic suggestion, without calling the search API", async () => {
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    const input = screen.getByPlaceholderText("Search BIS Standards, Services & Documents");
+    fireEvent.change(input, { target: { value: "IS 5522:2014" } });
+
+    await waitFor(() => expect(screen.getByText("IS 5522:2014")).toBeInTheDocument());
+    expect(screen.getByText("Look up this exact standard")).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("typing a non-identifier query debounces a call to the real /api/v1/search endpoint and shows only real returned standards", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          { standardNumber: "IS 14543:2016", title: "Packaged Drinking Water", documentId: "doc-1", chunkId: "c1" },
+          { standardNumber: "IS 14543:2016", title: "Packaged Drinking Water", documentId: "doc-1", chunkId: "c2" }, // duplicate standard, must be deduped
+        ],
+      }),
+    });
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    const input = screen.getByPlaceholderText("Search BIS Standards, Services & Documents");
+    fireEvent.change(input, { target: { value: "packaged drinking water" } });
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled(), { timeout: 1000 });
+    await waitFor(() => expect(screen.getByText("IS 14543:2016")).toBeInTheDocument());
+    // deduped: only one suggestion rendered despite two matching chunks
+    expect(screen.getAllByText("IS 14543:2016")).toHaveLength(1);
+  });
+
+  test("a query the search API returns nothing for shows an honest no-results hint, never a fabricated suggestion", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, json: async () => ({ results: [] }) });
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    const input = screen.getByPlaceholderText("Search BIS Standards, Services & Documents");
+    fireEvent.change(input, { target: { value: "totally nonexistent product xyz" } });
+
+    await waitFor(() => expect(screen.getByText(/No matching BIS standards found/i)).toBeInTheDocument(), { timeout: 1000 });
+  });
+
+  test("clicking a suggestion navigates directly to the standard, not a search results page", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ standardNumber: "IS 5522:2014", title: "Stainless Steel Sheets", documentId: "doc-abc", chunkId: "c1" }] }),
+    });
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    const input = screen.getByPlaceholderText("Search BIS Standards, Services & Documents");
+    fireEvent.change(input, { target: { value: "stainless steel" } });
+
+    await waitFor(() => expect(screen.getByText("IS 5522:2014")).toBeInTheDocument(), { timeout: 1000 });
+    fireEvent.click(screen.getByText("IS 5522:2014"));
+    expect(pushMock).toHaveBeenCalledWith("/standards/doc-abc");
+  });
+
+  test("ArrowDown then Enter selects the highlighted suggestion", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ standardNumber: "IS 5522:2014", title: "Stainless Steel Sheets", documentId: "doc-abc", chunkId: "c1" }] }),
+    });
+    renderOverlay(<SearchOverlay open onClose={() => {}} />);
+    const input = screen.getByPlaceholderText("Search BIS Standards, Services & Documents");
+    fireEvent.change(input, { target: { value: "stainless steel" } });
+    await waitFor(() => expect(screen.getByText("IS 5522:2014")).toBeInTheDocument(), { timeout: 1000 });
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(pushMock).toHaveBeenCalledWith("/standards/doc-abc");
+  });
+});

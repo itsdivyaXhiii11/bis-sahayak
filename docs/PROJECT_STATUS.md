@@ -1,0 +1,987 @@
+# Project Status
+
+Last updated: 2026-09-09. Categories: DONE, PARTIAL, BLOCKED, PLANNED — only
+recording what was actually observed this session or in prior sessions'
+verified work, never projected.
+
+## Application
+
+| Area | Status | Notes |
+|---|---|---|
+| Government-style navigation (7 sections, mega menus) | DONE | Verified visually; all placeholder routes load (never 404 for a real nav item) |
+| Search overlay + `/search` page | DONE | Wired to real `/api/v1/search`; global search state-machine overhaul (suggestions, grouped results) NOT attempted — see "Not attempted this session" below |
+| Homepage | DONE | Static hero (floating/glowing decorations removed this session — see below) |
+| Standards browse/compare | DONE | Pre-existing, unaffected this session |
+| Standard Passport (`/standards/[id]`) | DONE | Rebuilt this session — see below |
+| Certification page (`/certification`) | DONE | Rebuilt in a prior session (discovery search + scheme explorer); this session added certification-relationship linking from the Standard Passport |
+| Placeholder pages for unbuilt sections (Testing, Resources, e-Services, About BIS) | DONE | Honest "Coming soon" state, not fabricated content |
+
+## Standard Passport rebuild (this session)
+
+Replaced `src/app/standards/[id]/page.tsx`'s ad hoc evidence dump with a
+real information-record layout: identity header, overview (only fields
+actually present — no fabricated "Mandatory Active" status, which the
+previous version hardcoded unconditionally), certification relationships
+(cross-referenced against the real `data/bis-standards-dataset/
+qco-standards.json` reference set via a shared `src/lib/
+certification-schemes.ts` module — matches only on exact standard number,
+never guesses across editions), a testing section (chunks matched against
+the same `TESTING_KEYWORDS` pattern `coverage-analysis.ts` already uses,
+exported for reuse rather than duplicated), an honest "related standards
+not yet available" section (no relationship data exists in the schema),
+and the evidence list. "Search in AI Assistant" was renamed "Ask about
+this standard," routing to the homepage query flow instead of a separate
+chat surface.
+
+Verified live against the real database: a real ingested standard
+(IS 14543:2016) renders all new sections correctly, the fabricated status
+text no longer appears, and a standard with no matching certification
+reference entry correctly shows the honest "not available" message rather
+than a false positive.
+
+**Known limitation**: the testing/evidence keyword split is a simple
+regex match against chunk text, not true section classification — a
+testing-heavy product manual (like IS 14543's) can have the majority of
+its chunks classified as "Testing" because the underlying document
+genuinely discusses sampling/testing throughout. This is a real match on
+real text, not fabrication, but it's a coarse heuristic, not a proper
+information-architecture parse.
+
+## Knowledge graph foundation (this session, prompts/dataAcquisition.md)
+
+A 45-section, multi-week data-engineering mission. This session built the
+**foundation only** — schema, provenance model, one real (small) discovery
+pass, and migration of already-verified data — not the full acquisition
+pipeline. Nothing here was faked to look more complete than it is.
+
+| Item | Status | Notes |
+|---|---|---|
+| Schema (`standards`, `sources`, `certification_schemes`, `qcos`, `relationships` tables) | DONE | Additive only — pushed to the live shared Neon DB (confirmed with the user first), existing `documents`/`chunks`/`query_logs` untouched |
+| `src/lib/knowledge-graph.ts` (relationship-type vocabulary + anti-fabrication validator) | DONE | 10 tests — a relationship candidate with no source/document or empty evidence text is rejected outright, matching §43's "never fabricate a relationship" |
+| `scripts/data-discover.ts` (Phase 1 discovery) | DONE, real | The only stage that touched the network this session. Verified live: bis.gov.in's certification-listing pages are JS/AJAX-rendered (confirmed by fetching one — no data in the static HTML), so discovery used BIS's own sitemap.xml instead (real, static, robots.txt-published). One real, rate-limited (politeFetch, 1.5s between requests) crawl found 415 genuine candidate URLs, written to `data/manifests/discovered-sources.json`, every one `needs_review` |
+| `scripts/data-migrate-existing.ts` | DONE, real, idempotent | Migrated the 22 already fact-checked `qco-standards.json` entries and the 4 already-ingested seed documents into the new schema — 25 real `standards` rows, 3 certification schemes, 21 QCOs, all 4 documents linked. Re-ran twice live to confirm idempotency (0 duplicates second run) |
+| `scripts/data-report.ts` | DONE, real | Generates `data/reports/coverage-report.md` from live DB counts — not projected numbers |
+| Retrieval regression after schema/data changes | DONE | Re-ran live: still 12/12 recall, 8/8 no-false-match |
+| PDF download/extraction (Phase 2+) | NOT ATTEMPTED | No PDFs downloaded or parsed this session |
+| Amendment/revision graph, laboratories, committees, testing-facility matrix, domain taxonomy beyond existing `category` field | NOT ATTEMPTED | No tables or data exist for these yet |
+| Relationship extraction (populating the `relationships` table itself) | NOT ATTEMPTED | Table exists and is validated (`knowledge-graph.ts`), but no script has inserted a single relationship row yet — `data-report.ts` correctly reports 0 |
+| 100-question golden dataset (§36) | NOT ATTEMPTED | The existing 20-question `golden-queries.json` was not expanded — doing this well requires more standards with real evidence than the 25 currently migrated, and rushing it risks the exact "expected answer without real backing" problem this mission explicitly prohibits |
+
+**Known limitation found while building this**: the discovery keyword
+filter (`isRelevant` in `data-discover.ts`) is a coarse substring match —
+verified live and covered by a test that it also matches unrelated pages
+(e.g. a "World Standards Day" regional-office photo gallery, because its
+URL slug contains "standards"). This is exactly why every discovered
+source is `needs_review`, never auto-confirmed.
+
+## Global search overhaul (this session, prompts/globalSearch.md — Milestone C)
+
+Scoped to the search *overlay*'s typeahead, not a full grouped multi-vertical
+results page (there isn't yet distinct indexed data for separate
+Certification/Testing/Resources search verticals — building that grouping
+would mean either empty categories or fabricated ones, both explicitly
+prohibited by the prompt itself).
+
+| Item | Status | Notes |
+|---|---|---|
+| Explicit search state machine (`src/lib/search-state.ts`) | DONE | Discriminated union (`empty/focused/typing/suggestions/no_results/offline`) replaces scattered booleans in `SearchOverlay` |
+| Deterministic exact-identifier suggestions | DONE | Reuses `resolveStandardIds` directly (pure regex, no duplicate parser) — instant, no API call, no LLM |
+| Real debounced typeahead (300ms) against `/api/v1/search` | DONE | Deduped to one suggestion per distinct standard; never fabricates a suggestion the API didn't return |
+| Keyboard navigation (↑/↓/Enter) | DONE | Selecting a suggestion navigates straight to its Standard Passport |
+| Global `/` shortcut to open search | DONE | Suppressed while focused in any input/textarea/contenteditable |
+| Honest no-results typeahead state | DONE | "No matching BIS standards found... press Enter to search anyway" — never silently empty, never a fabricated result |
+| `standards-id.ts` regression tests | DONE | Was flagged missing in the last two milestone reports; 12 tests added, including the exact Sec 6 / Sec 26 case named in the prompt |
+| Grouped multi-vertical results page (Standards/Certification/Testing/Resources sections) | NOT ATTEMPTED | No separate indexed search verticals exist yet — the existing `/search` and homepage query flow already show certification/testing info per-standard via `RecommendationCard`/`CoveragePanel`/`ConflictPanel`, which this session did not duplicate into the overlay |
+| Full accessibility/responsive/dark-mode audit passes | NOT PERFORMED | No browser tooling available this session |
+
+**Known limitation, found while building this**: `/api/v1/search` (used for
+typeahead) has no abstention behavior — unlike `/api/v1/query`'s
+engine-derived grounding, hybrid semantic retrieval always returns *some*
+nearest-neighbor candidates even for a nonsense query (verified live: a
+deliberately fake product string still returned 5 results). The suggestions
+never claim relevance/grounding/confidence for these — they only show the
+standard number and title exactly as retrieved — but a very off-topic query
+can still surface a loosely-related suggestion in the overlay. This is a
+pre-existing property of `/api/v1/search`, not something this milestone
+introduced, but it's now more visible because typeahead calls it on every
+keystroke.
+
+## Not attempted this session (scope explicitly deferred, not silently dropped)
+
+- **Testing discovery page upgrade** — `/testing` remains the existing
+  honest placeholder; no dedicated testing search/discovery UI was built.
+- Dedicated responsive/accessibility/dark-mode audit passes — not
+  performed this session (no browser tooling available); existing
+  token/utility patterns were reused, which are already dark-mode-aware,
+  but nothing was screenshot-verified at any breakpoint.
+
+## Frontend fixes (this session)
+
+| Issue | Status | Fix |
+|---|---|---|
+| Floating/glowing/rotating decorative elements (violated the project's own "no AI-slop" rule) | DONE | Removed `animate-float`, `animate-pulse-slow` blobs, `animate-rotate`, dead CSS keyframes |
+| Header logo tilting on hover | DONE | Removed `group-hover:rotate-12` |
+| Navigation reverted to dead `#anchor` links by an unrelated merge | DONE | Restored mega-menu wiring to real routes |
+| Missing Government of India emblem | DONE | Added Ashoka Chakra to the government bar and footer; re-fixed after a subsequent merge silently reverted it back to the placeholder |
+| Unused-import lint warnings (`WhatsNew.tsx`, `Footer.tsx`) | DONE | Cleaned up — `npm run lint` now reports zero warnings |
+
+## ML / Intelligence engine
+
+See `docs/ML_ENGINE.md` for full detail. Summary:
+
+| Stage | Status |
+|---|---|
+| Query normalization, hybrid retrieval, reranking, evidence aggregation, coverage analysis, conflict detection, deterministic grounding, deterministic confidence, citation/standard validation | DONE — 45 unit/integration tests passing, live-smoke-tested against the real database |
+| LLM answer synthesis (`generateAnswer`) | PARTIAL — schema round-trip verified via mocked responses; never successfully executed live this session (OpenRouter credit exhaustion) |
+| Confidence calibration | BLOCKED | Correctly reports "calibration data insufficient" (7 real samples, need 20+) rather than fabricating a curve |
+| Deterministic intent extraction (reducing the 2 LLM-calls/query to fewer) | PARTIAL | Exact-ID queries now skip the LLM entirely (`deterministicIntentFastPath`); general natural-language queries still use the LLM path when a capable provider is available |
+
+## Provider-independent LLM architecture (this session)
+
+See `docs/ARCHITECTURE.md` for full detail. `intent.ts`/`answer.ts` no
+longer call an LLM SDK directly — both route through `src/lib/providers/`.
+
+| Item | Status | Notes |
+|---|---|---|
+| Provider adapter (local / OpenRouter free / paid) + automatic fallback | DONE | 23 unit tests, mocked, no real API key required |
+| Evidence-only fallback (never fabricates prose) | DONE | Used whenever every configured provider fails |
+| Structured-output capability detection | DONE | Small verified allowlist; nothing assumed capable by default |
+| Cost-control (timeout, cooldown, no-retry policy) | DONE | See docs/ARCHITECTURE.md's cost-control section |
+| Real local (Ollama) inference | DONE | Verified live 2026-09-09 — `ollama` 0.33.3 + `llama3.2:3b`, `npm run ollama:smoke` + full-pipeline + fallback tests. See "Ollama local provider — live-verified" section below. |
+| Real paid-tier OpenRouter call | PLANNED | Only the free tier has been exercised live, and only intermittently |
+
+## Testing infrastructure (this session)
+
+Vitest added (`vitest.config.ts`, `vitest.setup.ts`) — previously there was
+no frontend or provider-level test runner, only the tsx-script convention
+for the deterministic ML pipeline.
+
+| Suite | Tests | Status |
+|---|---|---|
+| Provider architecture (`src/lib/providers/provider-architecture.test.ts`) | 23 | DONE — all passing |
+| Frontend components (Header, MegaMenu, SearchOverlay, PlaceholderPage) | 23 | DONE — all passing |
+| `npm run verify` (lint + typecheck + all tests + build) | — | DONE — single command, green |
+
+## Known bug found and fixed this session
+
+A live smoke test against real retrieval data surfaced a genuine grounding
+defect (a fabricated-identifier query nearly passed as `supported_inference`
+because a post-reranking score field was miscalibrated against a stale
+assumption). Fixed and covered by a regression test using the real observed
+score magnitudes. Full writeup in `docs/ML_ENGINE.md`.
+
+## Resource constraints
+
+OpenRouter (`openai/gpt-4o`) is the active LLM provider. The Vercel AI
+Gateway remains blocked (`customer_verification_required`, unresolved across
+every session so far). OpenRouter's free-tier balance is effectively
+exhausted — every live `generateAnswer()` call this session failed with a
+credit-insufficiency error from the provider. This blocks:
+
+- Full golden-query generation-layer evaluation (7/20 tested, from a prior
+  session)
+- Live verification of the new reduced LLM answer schema
+- Confidence calibration (needs more real generation runs)
+
+None of these are code defects. No production behavior (token limits,
+model choice, prompt content) was changed to work around the credit
+constraint.
+
+## Docker (this session)
+
+`Dockerfile` (multi-stage, `next.config.ts`'s `output: "standalone"`) +
+`docker-compose.yml` with two profiles, both using the same image:
+
+| Path | Command | Status |
+|---|---|---|
+| OpenRouter | `docker compose --profile openrouter up --build` | DONE — image builds clean, container starts, homepage verified with `curl` (200) |
+| Ollama (local) | `docker compose --profile local up --build` | PARTIAL — compose config written and reviewed; the `ollama` container itself and a real local-model round trip were not started/tested this session |
+
+Neither path provisions a database — both need a real `DATABASE_URL`
+(Neon or any pgvector-capable Postgres) via `.env.local`, which the compose
+file passes through via `env_file`.
+
+## Immediate next step
+
+Get OpenRouter credit topped up (even a small amount) and re-run
+`scripts/smoke-test-pipeline.ts` for the same 3 queries already
+deterministic-verified this session — that closes the single largest
+unverified gap (`generateAnswer()` in live production) with minimal spend.
+
+## Intelligence Engine V1 — Phase 0-2 (this session, prompts/rag.md)
+
+Full audit in `docs/INTELLIGENCE_ENGINE_AUDIT.md`, written before any code
+changed. Key finding: the `relationships` table (the actual knowledge-graph
+edges) has 0 rows — no extraction script has ever populated it — so any
+graph *query* engine (`getNeighbors`, `findPath`, etc.) would return nothing
+for every real call. Per the audit's own recommendation and this project's
+established pattern of scoping specs down rather than attempting them
+superficially, only the two phases that don't depend on graph data were
+implemented this pass:
+
+| Item | Status | Notes |
+|---|---|---|
+| Phase 0 — Repository audit | DONE | `docs/INTELLIGENCE_ENGINE_AUDIT.md` |
+| Phase 1 — Query planner (`src/lib/query-planner.ts`) | DONE | Deterministic plan-type (14 types) + complexity (SIMPLE/MODERATE/COMPLEX) classification, no LLM call; 14 tests |
+| Phase 2 — Domain tool registry (`src/lib/tools/`) | DONE | `resolveStandard`, `getStandard`, `searchStandards`, `findApplicableStandards`, `checkMandatoryStatus`, `findQCO`, `getCertificationScheme` — all deterministic, all return `{status: "not_found"}` rather than a guess; contract tests (registry timeout/validation/error handling) + a live smoke script (`npm run tools:smoke`) exercising every tool against the real DB |
+| Phase 3 (graph relational layer) | Already DONE from the prior `dataAcquisition.md` milestone | Unchanged |
+| Phase 4 (graph query engine) | Deliberately NOT attempted | Would query 0 relationship rows |
+| Phases 5-15 (multi-channel retrieval orchestration, claim objects, agent orchestrator, workflow intelligence, caching, 100-query eval, observability, frontend) | NOT attempted this pass | See audit §4 gap table |
+
+**Real bug found and fixed along the way**: `CERTIFICATION_KEYWORDS` in
+`src/lib/coverage-analysis.ts` was `/\b(certif|licen[cs]e|scheme|mark|
+registration)\b/i` — `\bcertif\b` requires a word boundary immediately
+after "certif", which never occurs (the word always continues:
+"certif**ication**", "certif**icate**"), so it silently never matched the
+single most common way certification is actually written in evidence
+text. This was live in the query pipeline's coverage analysis, not a new
+bug — found while writing `query-planner.test.ts` against a realistic
+certification sentence, not by design. Fixed to `/\b(certif\w*|
+licen[cs]e\w*|scheme|mark|registration)\b/i` and covered by a new
+regression test (`src/lib/coverage-analysis.test.ts`).
+
+The new tools do not query `certification_schemes`/nothing in
+`relationships` — `getCertificationScheme` deliberately reuses the
+existing JSON-backed `findCertificationSchemeForStandard` (already the
+UI's source of truth) rather than the DB table, since the audit found
+`certification_schemes` has no direct standard foreign key (only an
+indirect shared-`sourceId` link via `qcos`) — see audit §2 for the
+duplicated-data risk this leaves unresolved.
+
+Verification: `npm run verify` green (162 vitest tests + 4 ML test files,
+lint clean, typecheck clean, production build clean); `npm run
+eval:retrieval` unchanged at 12/12 recall, 8/8 no-false-match against the
+dev server; `npm run tools:smoke` run live against the real Neon DB,
+confirming both the positive paths (25 real standards, a real QCO, a real
+certification scheme) and the anti-fabrication paths (unknown identifier →
+`not_found`; a real standard with no QCO row → `hasVerifiedQco: false`,
+never a false "voluntary" claim).
+
+Neither the query planner nor the tool registry is wired into
+`/api/v1/query` yet — that route's existing pipeline (intent → retrieval →
+evidence → grounding → confidence → LLM) is untouched and still the one
+actually serving requests.
+
+### Phase 7-8 — bounded agent orchestrator (this session, follow-up)
+
+`src/lib/agent/orchestrator.ts`: a single, bounded (max 3 iterations)
+orchestrator that runs a plan's `retrievalTasks` in dependency-ordered
+waves — identifier-independent tools first, identifier-dependent tools
+(`getStandard`, `checkMandatoryStatus`, `findQCO`,
+`getCertificationScheme`) once a candidate identifier is known — and
+stops on `required_evidence_covered`, `no_useful_new_evidence`,
+`max_iterations`, or `no_tools_for_plan`. Deliberately NOT LLM-driven:
+tool selection comes entirely from the deterministic query planner, so
+there's no LLM tool-choice to validate yet (rag.md §1/§22 still hold
+trivially). Tasks the planner requests that have no registered tool
+(`getStandardHistory`, `findLaboratories`, `compareStandards`,
+`findRelatedStandards`, `findReferencedStandards`, `getBISService`,
+`findTestingRequirements`) are reported as `skippedTasks`, never
+fabricated. 8 tests (DB-free, via an injected fake tool executor) +
+`npm run agent:smoke` run live against the real DB and tool registry.
+
+**Real bug found and fixed via the live smoke script, not the unit
+tests**: for a `CERTIFICATION`-type plan (whose `retrievalTasks` don't
+include `resolveStandard`), a query that names a real identifier
+explicitly — e.g. "What certification scheme applies to IS 269:2015?" —
+was having that identifier silently overridden by an unrelated fuzzy
+`findApplicableStandards` top hit, because nothing seeded the
+already-parsed identifier before the tool calls ran. Fixed by seeding a
+working identifier from the plan's own parsed identifiers up front, while
+keeping `resolvedStandard` in the result strictly limited to identifiers
+a confirming tool (one that actually validates against a real
+table/dataset) approved — so a fabricated identifier the user typed is
+still correctly reported as unresolved, never as "resolved."
+
+Still not wired into `/api/v1/query`. Wiring the orchestrator into that
+route (replacing or supplementing the existing intent→retrieval call) is
+the natural next phase once a relationship-extraction script exists to
+make Phase 4 (graph retrieval) worthwhile too.
+
+### "Standard Reasoning" / cross-standard comparison (this session, follow-up)
+
+User request (2026-08-30) asked for a "Truth Layer" that reasons across
+standards for hybrid products and automatically flags upcoming mandatory
+enforcement dates. Checked both against real data before writing any
+code: **0 of the 21 migrated QCO rows have a real `effectiveDate` or
+`notificationDate`** (all null), and the `relationships` table is still
+at 0 rows. Automatic enforcement-date flagging and legal-precedence
+reasoning would have nothing real to work from — building either now
+would be a feature that either shows nothing or has the LLM assert an
+unsupported legal conclusion, which CLAUDE.md's "never manufacture
+certainty" and rag.md §9 both forbid. Declined to build those two
+pieces; told the user why.
+
+What IS real and was built: `compareStandardsTool`
+(`src/lib/tools/comparison-tools.ts`, registered in the tool registry,
+wired into the orchestrator's `COMPARISON` plan type). Reports only:
+factual metadata differences (edition/status/domain/classification) from
+the `standards` table, a genuine same-base-standard flag (reusing
+`conflict-detection.ts`'s existing definition — not a new, drifting
+copy), and real textual term-overlap between two standards' *actually
+ingested* evidence chunks (reusing `coverage-analysis.ts`'s
+`significantTerms`). Every result carries an explicit `limitations`
+array stating it is not a legal-precedence ruling, and an
+`evidenceAvailable` flag per standard — since only 4 of 25 standards
+have ingested document text, most real comparisons will honestly report
+"insufficient evidence to compare content," not fabricate one.
+Live-verified via `npm run tools:smoke` against 4 real cases: two parts
+of the same base standard (`sameBaseStandard: true`), two unrelated
+standards with real overlap terms, one side missing evidence, and one
+fabricated identifier (`not_found`). `npm run verify` green (170 vitest
+tests), retrieval regression unchanged at 12/12 recall, 8/8
+no-false-match.
+
+### Dataset update: 22 → 48 entries (this session, follow-up)
+
+User reported the upstream `BIS-Standards-AI-Assistant/BIS-standards-dataset`
+repo now has 50 entries (up from 22). Cloned it, diffed by base standard
+number: 26 are genuinely new (24 overlap with standards already in
+`data/bis-standards-dataset/qco-standards.json`).
+
+**Before merging, spot-checked upstream's own two previously-documented
+errors** (see that file's README: the induction-cooker Section 26/6 mixup,
+and the fabricated "IS 4151:2020" edition) — **both are still present,
+unfixed, and still self-labeled `verified_accurate`** in the 50-entry
+version. Worse, upstream's `IS 14543` entry again claims a "2024"
+edition — the exact fabrication this project's README already documented
+and corrected once before. This confirms upstream's self-verification
+cannot be trusted for the new entries either.
+
+Consequently, all 26 new entries were appended with
+`verification_status: "needs_review"` (not upstream's `verified_accurate`
+claim), each with a `verification_note` naming upstream's unverified
+supersession/amendment/notification claims explicitly. Migrated into the
+DB via the existing idempotent `npm run data:migrate-existing` — the 22
+already-verified standards were untouched (correctly detected as
+"already present"), 26 new `standards`/`qcos` rows were inserted, all
+landed as `needs_review` in the DB (verified directly against the live
+table, not assumed from the script's own claim).
+
+**Real UI bug found and fixed along the way**: `SchemeExplorer.tsx`'s
+verification badge rendered *any* non-null `verificationStatus` in the
+same green "success" style, only special-casing `verified_accurate` →
+"Verified" text — so a `needs_review` entry would have shown a green,
+trust-implying badge literally reading `needs_review`. Fixed: a shared
+label map (`src/lib/verification-status.ts`, deliberately without the
+Node-only `fs`/`path` imports `certification-schemes.ts` has, so the
+client-side `SchemeExplorer` doesn't pull server-only code into its
+bundle) now renders `needs_review`/`unverified` with a distinct amber
+"warning" style, never the green "verified" style. Applied to both
+`SchemeExplorer.tsx` and the Standard Passport page
+(`src/app/standards/[id]/page.tsx`), which had the same raw-value
+fallback (a display-only rough edge, not a color-based misrepresentation
+there, but fixed for consistency). New regression test confirms a
+`needs_review` badge never carries the `success` class.
+
+Two existing tests had a hardcoded dataset-size assumption (`toBe(22)`)
+and an over-narrow standard-number regex that rejected the real joint
+`IS/ISO 80601-2-56:2017` designation now in the dataset — both fixed.
+`npm run verify` green (171 vitest tests), retrieval regression
+unchanged at 12/12 recall, 8/8 no-false-match. `data:report` now shows
+51 standards total (25 verified, 26 needs_review), 46/51 with a QCO,
+still 4/51 with ingested document text, still 0 relationships.
+
+### AI/ML completion audit + two same-day follow-up fixes (this session)
+
+A full 38-section AI/ML status audit was written to
+`docs/AI_ML_STATUS_REPORT.md` — independently verified against the live
+DB and a full test-suite re-run, not trusted from prior docs. Result:
+**42% weighted completion, NOT production-ready.** Top finding: the
+query planner/tool registry/agent orchestrator built earlier this
+session were real and tested but had zero production effect —
+`/api/v1/query` never called them.
+
+Two of that audit's own top recommendations were implemented
+immediately after:
+
+1. **`scripts/data-relationships.ts`** (new, idempotent) materializes
+   the `relationships` table's first real rows — 50 total (4
+   `STANDARD_HAS_PRODUCT_MANUAL`, 46 `STANDARD_SUBJECT_TO_QCO`, the
+   latter a new relationship type) — from existing
+   `documents.standardId`/`qcos.standardId` foreign keys, with real
+   provenance and `verificationStatus` inherited from the underlying
+   row (never upgraded). This is FK materialization, not text-based
+   relationship extraction — explicitly documented as such in both the
+   script and the audit update, so it isn't mistaken for more than it is.
+2. **`src/app/api/v1/query/route.ts`** now calls the bounded agent
+   orchestrator alongside (not instead of) the existing pipeline,
+   contributing a new `toolEvidence` response field. Additive only —
+   `engineConfidence`/`groundingState`/`recommendations` are computed
+   by exactly the same code as before; a failure inside the orchestrator
+   produces `toolEvidence: null`, never a failed request. Live-verified
+   via 3 real HTTP calls against the running dev server, including the
+   regression case from earlier this session (a CERTIFICATION-plan
+   query naming `IS 269:2015` explicitly resolves to that standard, not
+   an unrelated fuzzy search hit).
+
+`npm run verify` green (200 vitest tests, up from 171 + this session's
+orchestrator/knowledge-graph tests; 45/45 ML script tests), retrieval
+regression unchanged at 12/12 recall, 8/8 no-false-match, production
+build clean. `docs/AI_ML_STATUS_REPORT.md` updated in place with a
+dated "UPDATE" section (not a rewrite) documenting exactly this,
+recalculating overall completion to **~45%** — production readiness
+verdict unchanged (**NOT READY**): the audit's stated top risks (26/51
+standards unverified, 0 real temporal data, a 4-document corpus) are
+untouched by either fix.
+
+### Knowledge Boundary, Reference Registry, Graph Retrieval (this session, prompts/final.md)
+
+Three new P0 modules, all real and live-verified: `src/lib/
+knowledge-boundary.ts` (deterministic VERIFIED/PARTIALLY_SUPPORTED/
+NOT_IN_DATABASE/CONFLICTING_EVIDENCE/UNVERIFIED_SOURCE classification
+over signals the existing pipeline already computes), `src/lib/
+reference-registry.ts` (real stored-field lookup — never an invented
+URL/access type), and `src/lib/graph/graph-retrieval.ts` (`getNeighbors`
+against the real `relationships` table). Two new tools registered
+(`getReferenceEntry`, `getGraphNeighbors` — 10 tools total now), wired
+additively into `/api/v1/query` as `knowledgeBoundary`, `referenceEntry`,
+`graphNeighbors`.
+
+**Real bug found via live testing and fixed**: the first wiring anchored
+these to the retrieval engine's `topCandidate`, which for a standard
+with no ingested document silently falls back to an unrelated ingested
+standard — so a query about `IS 269:2015` (not indexed) was reporting
+`IS 5522:2014`'s metadata instead. Fixed by preferring the orchestrator's
+deterministically-resolved identifier, with an explicit override forcing
+`NOT_IN_DATABASE` when the resolved standard isn't indexed and differs
+from `topCandidate`. Verified before and after with the exact failing
+query.
+
+`npm run verify` green (211 vitest tests, up from 200; 45/45 ML tests),
+`tools:smoke` and `agent:smoke` re-run live (10/10 tools verified,
+including both new ones), retrieval regression unchanged (12/12, 8/8).
+Full detail in `docs/AI_ML_STATUS_REPORT.md`'s "UPDATE 2" section,
+including an honest scope cut: no ML reranker/model-registry/training
+pipeline was built this pass (0 labeled pairs exist — building that
+scaffolding now would be exactly the "looks sophisticated, adds
+nothing real" outcome the prompt's own rules warn against).
+
+### Footer policy pages served in-app (this session, follow-up)
+
+The footer's Privacy Policy / Terms of Use / Accessibility Statement links
+used to open www.bis.gov.in in a new tab, so three of the footer's own
+destinations left the service entirely.
+
+| Item | Status | Notes |
+|---|---|---|
+| `scripts/scrape-bis-policy-pages.ts` (`npm run data:policy-pages`) | DONE | Scrapes all three pages in English and Hindi from bis.gov.in; 19 unit tests over the parsers, run against BIS-shaped fixture HTML |
+| `data/bis-policy-pages.json` | DONE | 6 variants scraped live on 2026-09-03: privacy (5 paragraphs, English only), terms (6 paragraphs, en + hi), accessibility (4 paragraphs, en + hi) |
+| `/privacy-policy`, `/terms-and-conditions`, `/accessibility-statement` | DONE | Statically prerendered; footer now links internally |
+| Provenance on every page | DONE | Source URL, retrieval date, and BIS's own "Last Updated" line (or an explicit "not stated on the BIS page") |
+| Hindi | DONE | Shown when BIS publishes it. BIS serves an "only available in English" notice for the privacy policy under `?lang=hi`; that is recorded as `available: false` and the page falls back to English *and says so*, rather than machine-translating policy text or labelling English text as Hindi |
+
+The text is reproduced word for word and is never summarised, reworded or
+extended. A test pins the set of hosts BIS links to, so a future scrape
+that starts pulling in unrelated hosts fails loudly.
+
+A `/sitemap` page reproducing BIS's own sitemap was built and then removed
+before merge: mirroring another site's navigation is not this service's
+job, and every one of its ~111 links pointed off-site. The scraper's
+link-group parsing went with it rather than being left as dead code.
+
+Also fixed in passing: `politeFetch` (scripts/data-lib/rate-limit.ts) had
+no request timeout, so a bis.gov.in connection that was accepted and then
+never answered hung the whole script indefinitely — observed once during
+this scrape. Each attempt now has a 45s deadline and is retried like any
+other transport error.
+
+`npm run verify` green: 0 lint errors, 294 vitest tests across 38 files (up
+from 253 across 35), all three routes prerendered in the production build.
+### Assistant workspace layout (this session, follow-up)
+
+The results view was rebuilt as a three-column workspace from a supplied
+NotebookLM-style design: official sources on the left, the assistant and
+its results in the centre, output formats on the right. UI only — no new
+backend.
+
+| Item | Status | Notes |
+|---|---|---|
+| `src/components/workspace/SourcesPanel.tsx` | DONE | Official BIS sources + the existing Search Context panel, collapsible |
+| `src/components/workspace/WorkspacePanel.tsx` | DONE | Three actions + real recent searches, collapsible (was "Studio", renamed) |
+| `HomeClient` three-column results view | DONE | Columns follow which panels are open; both side panels hide below their breakpoint |
+| Shared recent-query store bindings | DONE | `subscribeToRecentQueries` / `getRecentQueriesSnapshot` extracted from `RecentQueries.tsx` into `src/lib/recent-queries.ts` so both surfaces share one implementation |
+| Truthfulness of the supplied design | ADAPTED | See below — 11 panel tests pin these |
+
+Three things in the design could not be reproduced literally without
+breaking the project's own rules, so they were adapted rather than copied:
+
+1. **Source counts.** The design shows "1,245 standards", "467 orders",
+   "18,765 notifications". This app does not hold those figures, and a
+   plausible number beside a government source is exactly the fabrication
+   CLAUDE.md forbids. Each row shows its real host instead — checkable,
+   where a total would not be. A test asserts no count-shaped subtitle.
+2. **"Recent notebooks."** The design lists notebooks that do not exist.
+   Replaced with this browser's real query history, which the app already
+   keeps; empty history says so rather than showing placeholder rows.
+3. **Studio formats.** Video Overview, Mind Map, Reports, Flashcards, Quiz,
+   Infographic and Data Table are not built. They render disabled and
+   labelled "Planned", with a line saying they are not built yet — the same
+   honest-placeholder rule the section pages already follow.
+
+**Left panel vs "no permanent left sidebar."** CLAUDE.md rules out a
+dashboard sidebar. This panel is a working surface beside the results, not
+navigation: the full-width government top navigation is untouched and
+remains the only way around the app, the panel collapses, and it is hidden
+entirely below `lg`. Flagged rather than assumed — say if it should go.
+
+Source selection is presentational: the checkboxes toggle but do not
+re-scope retrieval, and the panel says so where a user will see it.
+The duplicated "Official BIS Portal" card was dropped from the results
+column; e-BIS is now a row in the sources list.
+
+`npm run verify` green: 0 lint errors, 264 vitest tests across 36 files (up
+from 253 across 35).
+
+### Sources panel: reader-supplied documents, shared with the assistant (this session, follow-up)
+
+The Sources panel was rebuilt from a supplied design into a working source
+library. A reader adds a PDF or text file; it is analysed; the Indian
+Standards it cites become part of what the assistant discusses.
+
+| Item | Status | Notes |
+|---|---|---|
+| `src/lib/source-library.ts` | DONE | Shared store + `useSyncExternalStore` bindings; 13 unit tests |
+| `SourcesPanel` upload / drag-drop / remove / select | DONE | Posts to the pre-existing `/api/v1/analyze-document`; 27 panel tests |
+| Source prompt box | DONE | Asks a question of the added sources through `/api/v1/chat`, scoped by the standards they cite; renders the answer with its evidence, clause and page |
+| Web search from the prompt box | BLOCKED | No web-search provider exists in this codebase and no key is configured. Needs a provider decision — see below |
+| Shared knowledge base with the assistant | DONE | `HomeClient` unions result standards with library standards into `BisChatBot`'s `standardNumbers` |
+| Scope made visible | DONE | Chat header and centre column both say how much context came from added sources |
+| Web discovery ("Web" / "Fast Research") | REMOVED | Drawn from the design at first, then removed on request — there is no web-search service, so no control claims one |
+
+**No new backend was needed.** `/api/v1/analyze-document` already existed,
+fully built and unit-tested, with no UI calling it — it parses PDF/text,
+extracts BIS identifiers deterministically, and never sends the file to a
+model. This panel is its front end.
+
+**What is shared is identifiers, never document text.** The standards a
+document cites travel to the chat exactly like those from a search, and the
+server resolves the facts from the database. Posting the document's prose as
+chat input would re-open what `src/lib/chat-context.ts` closed and would let
+an uploaded file's wording act on the assistant. The panel therefore does
+not claim the assistant can answer "what does paragraph 3 of my file say" —
+a test asserts the wording stays honest about this.
+
+Cited-but-unindexed standards are shown dimmed and excluded from what is
+shared: the document really does cite them, but the assistant has nothing to
+answer from, and the two cases must not look identical.
+
+**Verified live**: uploading a text file citing IS 15450:2004 and
+IS 4985:2021 returns both identifiers with `inDatabase: false` and an
+explicit limitation string. Which is the honest catch — **the `standards`
+table is still empty in this environment (0 rows), so nothing an uploaded
+document cites currently resolves, and the shared scope stays empty.** The
+panel reports this accurately rather than appearing broken; it starts
+contributing context as soon as ingest populates `standards`.
+
+Files are held in `sessionStorage` for the tab only, and are sent nowhere
+except to be read for the standards they cite.
+
+`npm run verify` green: 0 lint errors, 285 vitest tests across 37 files (up
+from 253 across 35).
+
+**Web search from the Sources prompt box is BLOCKED, not skipped.** The
+request was for answers grounded in the added documents *and* a web search.
+The first half is built. The second cannot be: there is no web-search
+provider anywhere in `src/`, no API key for one in the environment, and
+adding one means a new outbound integration (Tavily/Brave/SerpAPI or
+similar), most of them paid — which docs/ui/SIH.md §23 makes a deliberate
+decision rather than an implementation detail.
+
+It is also worth deciding rather than assuming: this service answers from
+BIS evidence and cites clause and page for every claim. Arbitrary web
+results have no such provenance, so mixing them into the same answer
+surface would weaken the evidence model the whole product rests on. If web
+results are wanted, they should be visibly separated from BIS evidence and
+never cited as if they were a standard.
+
+No placeholder web results are rendered; the box does not offer a web
+option it cannot honour.
+
+### Assistant column: bottom prompt bar, and one entry point (this session, follow-up)
+
+| Item | Status | Notes |
+|---|---|---|
+| Global search redirects into the assistant | DONE | `SearchOverlay` now pushes `/?q=…` instead of `/search?q=…`; `HomeClient` already ran a `?q=` query on arrival, so the query lands in the assistant's own prompt bar and runs |
+| Prompt bar moved to the bottom of the column | DONE | Results above, prompt below, as in a chat |
+| Results render in the assistant column | DONE | The column scrolls with the page; the prompt bar is `sticky bottom-0` so it floats at the viewport bottom at every width |
+
+`/search` (keyword Document Search) is **kept** — it is a distinct feature
+reached from the navigation, ServiceActions, and the Testing and About
+pages, and it answers nothing. Only the free-text global search and the
+overlay's identifier suggestions now go to the assistant instead.
+
+Three `HomeClient` tests pin the behaviour: a `?q=` arrival runs the query
+and fills the prompt bar; the prompt bar is positioned after the results in
+document order; and both live inside the assistant column.
+
+`npm run verify` green: 0 lint errors, 292 vitest tests across 37 files.
+
+**Correction to the above (same session).** The assistant column was first
+given `lg:h-[calc(100vh-7rem)]` with its own internal scroll, on the
+assumption that `7rem` covered the government bar plus the navigation. It
+does not — the real header is taller, so the column overflowed the viewport
+and pushed the prompt bar below the fold, which is what it was supposed to
+prevent. Replaced with a `sticky bottom-0` prompt bar over a normally
+scrolling column: it floats at the bottom of the viewport without depending
+on the header's height being any particular value, and works below `lg` too.
+
+### Studio renamed to Workspace, cut to three actions (this session, follow-up)
+
+The seven output-format cards taken from the original design are removed.
+The panel is now titled **Workspace** and holds three actions:
+
+| Action | Status | Notes |
+|---|---|---|
+| Audio Overview | PLANNED | No speech synthesis exists anywhere in this codebase, so it renders disabled and labelled "Planned" |
+| Testings | DONE | Links to `/testing`, a real page in this service |
+| Certifications | DONE | Links to `/certification`, a real page in this service |
+
+Two of the three are real links rather than placeholders — `/testing` and
+`/certification` already exist and work, so there was no reason to render
+them disabled. Only Audio Overview is genuinely unbuilt.
+
+`StudioPanel.tsx` was renamed to `WorkspacePanel.tsx` with `git mv` so the
+history follows the file, and `showStudio` became `showWorkspace`.
+
+`npm run verify` green: 0 lint errors, 295 vitest tests across 37 files.
+
+### One assistant conversation, one scope (this session, follow-up)
+
+The Sources prompt box and the docked chat were two conversations asking
+two different questions. The box sent only the standards the added
+documents cite; the chat sent those *plus* the current result's standards.
+The same question put to the two could come back with different answers —
+in a service whose claim is traceable evidence, not a cosmetic problem.
+
+| Item | Status | Notes |
+|---|---|---|
+| `src/lib/assistant-conversation.ts` | DONE | One message thread + `useSyncExternalStore` bindings; `sendAssistantMessage` performs the single request |
+| `BisChatBot` reads the shared thread | DONE | Local `messages`/`loading` state removed |
+| Sources prompt box reads the shared thread | DONE | Shows the assistant's latest reply and says the exchange is in the conversation too |
+| One scope for both | DONE | `HomeClient` computes it once and passes it to both surfaces; neither derives its own |
+
+Four tests pin the behaviour: a question asked in the panel appears in the
+chat, a question asked in the chat appears in the panel, both surfaces send
+byte-identical `standardNumbers` and `originalQuery`, and the thread keeps
+both exchanges in order.
+
+Scope is still identifiers only — the server resolves the facts from the
+database, per `src/lib/chat-context.ts`. The pre-existing empty `standards`
+table still means scoped answers come back empty in this environment.
+
+`npm run verify` green: 0 lint errors, 299 vitest tests across 37 files.
+
+### PRD conformance pass — latency, transparency, logging, multilingual, fixed refusal (this session, 2026-09-04)
+
+Audited the external v1.0 PRD (`AI-Powered Intelligent Assistant for Indian
+Standards & BIS Services`) requirement by requirement against the code
+(full audit: `docs/PRD_GAP_ANALYSIS.md`). The PRD's FastAPI/FAISS stack is
+treated as superseded by `CLAUDE.md`; behaviour was audited, not stack.
+Executed the gaps that were fully completable this pass:
+
+| Item | Status | Notes |
+|---|---|---|
+| FR16 — response latency on screen | DONE | `runQueryPipeline` now returns `latencyMs`; `HomeClient` shows "N.Ns response" in the synthesis header. Voice path inherits it. |
+| NFR-Transparency — corpus boundary stated in-product | DONE | Fixed line under every synthesis answer naming what the corpus is (public titles/scopes, scheme docs, FAQs — not full standard text), per PRD §3.1. |
+| FR13 — log answered-vs-refused + language | DONE | `query_logs` gains nullable `outcome`, `language`, `translated` columns (schema only — run `npm run db:push`). Logged from `/api/v1/query` (both paths) and `/api/v1/chat`. |
+| FR2 / FR11 / §7 — multilingual query & answer (Hindi) | DONE (Hindi), pluggable | New `src/lib/language.ts` (deterministic script-range detection + explicit-choice resolution), `src/lib/translate.ts` (translate-in via the provider adapter, Tier-0 fallback = use original text). `generateAnswer` takes `answerLanguage`; standard numbers/titles never translated; evidence-only fallback stays English **and says so**. `HomeClient` sends the UI language. Other 7 UI languages detect + label but answer in English with a note until verified. |
+| FR4 / §8 — fixed, explicit refusal naming the corpus boundary | DONE | New `src/lib/refusal.ts` (fixed en+hi copy for out-of-scope / insufficient-evidence / not-in-database). Pipeline swaps the synthesis prose for the fixed refusal whenever the deterministic engine's top-candidate grounding is `insufficient_evidence`, there are no candidates, or `knowledgeBoundary` is `NOT_IN_DATABASE`. Retrieved candidates still render as related context; the refusal copy says exactly that. §8c citation gate wired via the same `anyEvidenceShown` check. |
+| §8.1 — threshold calibration against real in/out-of-corpus queries | NOT DONE | Needs a live DB + provider run to collect top-1 scores; cannot be completed offline this pass. The fixed-refusal wiring above reuses the existing deterministic grounding decision rather than a new uncalibrated cutoff. |
+| FR8 — cross-encoder re-ranker evaluation | NOT DONE | Separate track. |
+| Corpus expansion (scheme PDFs, FAQs) | NOT DONE | Separate data-engineering track, per the user's scoping. |
+
+Verification: `npm run lint` clean, `npm run typecheck` clean, `npx vitest
+run` 347/347 (up from 331; +16 across `language.test.ts`,
+`refusal.test.ts`, `translate.test.ts`, `answer.test.ts`), `npm run
+test:ml` 30/30, `next build` compiles + typechecks clean (the parallel
+page-data collection phase OOMs on this machine — a local resource limit,
+not a code error; `--experimental-build-mode=compile` completes). Retrieval
+regression not re-run (needs the dev server) — retrieval.ts is unchanged
+and the English query path is byte-identical to before except the new
+response fields and the fixed-refusal swap.
+
+**Migration required before deploy:** `npm run db:push` to add the three
+nullable `query_logs` columns. The insert is already wrapped in try/catch,
+so logging degrades quietly until the columns exist — no request fails.
+
+#### Live verification (2026-09-04, `npm run smoke:prd`)
+
+Ran against the real Neon DB (re-ingested the 19 seed docs first — the
+branch had 0 chunks) and OpenRouter. `.env.local`'s
+`OPENROUTER_MODEL=google/gemma-3-27b-it:free` is **discontinued** by
+OpenRouter ("unavailable for free"); swapped to
+`minimax/minimax-m3:free`, which works for text (translation) but is not
+on the structured-output allowlist, so intent + answer stay deterministic
+(evidence-only) — the designed Tier-0 path.
+
+| Case | Result |
+|---|---|
+| EN "tests for packaged drinking water" | ✓ `answered`, IS 14543 + IS 13428, both `verified` / `DIRECTLY_APPLICABLE`, 6 evidence each. latency 16 s. |
+| EN "boiling point of xenon at 3 atmospheres" (nonsense) | ✗ **`answered`, confidence `high`, 4 `verified` / `DIRECTLY_APPLICABLE` standards.** Grounding is too lenient — see below. |
+| EN "certification route … helmets IS 2925" (real id, not indexed) | ✓ `refused_not_in_database`, fixed refusal string, candidates shown as `insufficient_evidence`. |
+| HI "पैकेज्ड पेयजल के लिए कौन से परीक्षण आवश्यक हैं?" | ✓ `translated: true`, `answerLanguage: hi`, same two standards as the English query (**multilingual parity**), Hindi refusal/limitation copy, honest "Hindi prose unavailable" note. latency 7.7 s. |
+
+**Confirmed working:** language detection, translate-in, multilingual
+parity, `latencyMs` in the response, the `not_in_database` refusal + the
+identifier gate (only fires when the user actually named a standard), the
+Hindi refusal/limitation strings.
+
+**Bugs surfaced (pre-existing, not from this pass — tracked for follow-up):**
+
+1. **Grounding accepts nonsense.** With semantic search intermittently
+   failing (a `<=> $n::vector` param-binding error under the neon-http
+   driver — retrieval falls back to keyword-only), a garbage query keyword-
+   matches unrelated chunks and `grounding.ts` still rates the top
+   candidate `verified` + `high` confidence. The fixed-refusal wiring
+   relies on that grounding decision, so it doesn't catch this. **This is
+   exactly what PRD §8.1's top-1 relevance floor is for** — now
+   empirically confirmed, not theoretical. Highest-priority follow-up.
+2. **Semantic-search SQL error** (`operator does not exist` / param count
+   on the `embedding <=> $n::vector` query) — intermittent, forces
+   keyword-only retrieval. Needs a `retrieval.ts` fix independent of this
+   pass.
+3. **Latency 8–38 s** vs the PRD's 10 s target — slow free model + agent
+   orchestrator + provider retries. `refused_not_in_database` (no LLM
+   call) came in at 9.4 s; the answered cases did not.
+
+### Ollama local provider — live-verified (this session, 2026-09-09)
+
+`docs/PROJECT_STATUS.md` and `docs/AI_ML_STATUS_REPORT.md` had listed
+"Real local (Ollama) inference" as the last unproven piece of the
+provider architecture — the entire zero-cost floor was mock-tested only.
+It is now verified against a real server. **No architectural change** —
+the existing `LocalProvider` (OpenAI-compat `fetch`, `LOCAL_LLM_*` env,
+`AbortController` timeout, opt-in structured output) was already the
+right shape; this session hardened its error handling, added a real
+smoke test, and ran it.
+
+| Item | Status | Notes |
+|---|---|---|
+| `LocalProvider` error normalization | DONE | Failures now carry a prefix — `connection_failed:` / `timeout:` / `model_not_found:` / `http_error:` / `invalid_response:` — so a down server, an unpulled model, and a slow model are distinguishable (§13 of the task). An empty 2xx completion is now a failure, not a silent success. |
+| `LOCAL_LLM_TIMEOUT_MS` | DONE | Optional; default unchanged at 15000. A knob for slow hardware, not a silent bump. |
+| `scripts/ollama-smoke.ts` / `npm run ollama:smoke` | DONE | DB-independent. Checks reachability → model pulled → real `generateText` round trip → (structured too if opted in). Exits non-zero on failure. |
+| `src/lib/providers/local-provider.test.ts` | DONE | 19 mocked cases: config parsing, request shape, all six error modes, structured opt-in on/off, timeout parsing. `npx vitest run` 542/542 green (was 523 + 19). |
+| Real `generateText` round trip | VERIFIED | `ollama` 0.33.3, `llama3.2:3b`, host. ~3.5–4.6 s for a one-sentence grounded answer. `finishReason=stop`, token counts returned. |
+| Real `generateStructured` round trip | PARTIAL | Passes a **trivial** 2-field schema (~5.6 s). **Fails the real `QueryIntentSchema`** — `llama3.2:3b` returns non-JSON prose (`schema_validation_failed: Unexpected token 'i', "isRelevant"...`). `LocalProvider.generateStructured` uses a bare `JSON.parse` (it deliberately does not pull in the Gemini/Groq normalize-and-alias helpers). So `structuredOutput` **stays `false` by default** for local — the router skips it for intent/answer and the deterministic path handles them, exactly as designed. Not marked capable. |
+| Full pipeline, `LLM_PROVIDER=local` (`npm run smoke:prd`) | VERIFIED | 4 PRD cases against the real Neon DB (19 docs / 557 chunks). Ollama served the Hindi **translate-in** call live (`provider_succeeded`, ~3.2 s). Intent + answer used the deterministic / evidence-only path (local skipped for structured). Grounding, `refused_not_in_database`, and Hindi language handling all unchanged from the OpenRouter/Gemini runs. |
+| Provider fallback | VERIFIED | Real chain, `generateTextWithFallback`: (1) bad Gemini key → **Ollama success** (`local`, ~3.3 s, grounded text). (2) bad Gemini key + Ollama pointed at a dead port → `connection_failed: fetch failed` → `response: null` → caller does evidence-only. Retry-limit 0 and 60 s cooldown observed (cases 2–4 of the opt-in run skipped `local` after its first structured failure). |
+| Docker `local` profile | NOT ATTEMPTED | No Docker daemon on this machine. `docker-compose.yml` was corrected (`LOCAL_LLM_MODEL` default `llama3` → `llama3.2:3b`, `depends_on` now waits on an `ollama` healthcheck instead of just container start, pull step documented) but **not run**. The app→Ollama hostname (`http://ollama:11434/v1`) and the same `LocalProvider` code path are exercised on the host; only the container networking is unverified. |
+
+**Pre-existing issue re-confirmed, NOT caused by Ollama:** the nonsense
+query "boiling point of xenon at 3 atmospheres" still returns
+`answered` / `high` / verified standards under `LLM_PROVIDER=local` —
+identical to the OpenRouter/Gemini behavior, because the LLM is not
+involved in that decision at all (local is skipped for structured; the
+answer is evidence-only). This is the same grounding-leniency defect
+already tracked above (PRD §8.1 top-1 relevance floor). The Ollama
+integration is not responsible for it and does not change it.
+
+**Environment note:** `node_modules` on this machine was stale relative
+to the committed manifests (`@ai-sdk/openai-compatible`, a dependency of
+the merged Groq provider, was in `package.json` + `package-lock.json`
+but not installed) — `npm install` fixed it. Not a repo defect; CI/`npm
+ci` from a clean checkout is unaffected. `.venv/**` was added to
+`eslint.config.mjs`'s ignore list (a local Python virtualenv, gitignored,
+whose bundled minified JS was being linted as source — same fix already
+applied to `playwright-report/**`).
+
+Verification: `npm run lint` clean, `npm run typecheck` clean, `npx
+vitest run` 542/542, `npm run test:ml` 30/30 + 20/20, `npm run build`
+clean. `npm run verify` green.
+
+---
+
+# Session 2026-09-09 — PRD completion pass
+
+Full requirement-by-requirement detail in `docs/PRD_GAP_ANALYSIS.md`
+("Session 2026-09-09"). Summary of what is now true, measured live against
+the Neon index (19 documents, 557 chunks):
+
+| Item | Status | Notes |
+|---|---|---|
+| PRD §8.1 — post-retrieval relevance floor | DONE | `src/lib/relevance-floor.ts`, `RELEVANCE_FLOOR = 0.45`, calibrated from real in/out-of-corpus measurements (`npm run eval:refusal-threshold`). 10 unit tests |
+| Real cosine similarity in retrieval | DONE | `RetrievedChunk.semanticSimilarity` — the pipeline previously had no absolute relevance magnitude at all, only rank reciprocals |
+| PRD §9 — refusal correctness | DONE, 12/12 | `npm run eval:refusal`. Asserts both directions (out-of-corpus refuses, in-corpus does not); 0 refusals assert a primary standard |
+| Refusal no longer leaves primary recommendations standing | DONE | Real defect caught by the new eval — see below |
+| PRD §9 — multilingual parity | DONE, measured | `npm run eval:multilingual`. §7 language contract 5/5; strict grounding parity 3/5 — see below |
+| PRD FR12 — document removal / inspection | DONE | `npm run corpus -- list \| orphans \| remove`. Verified live |
+| Fabricated compliance map | FIXED | Was inventing certification status, test clauses, and lab coordinates. See below |
+| Latency NFR (under 10s) | MET on local, MISSED on Gemini | local Ollama: median 6.9s, 2/12 over. Gemini free tier: median 16.2s, 7/12 over |
+| PRD FR8 — cross-encoder comparison | NOT ATTEMPTED | Deliberate; re-ranking itself is done and still measures 12/12 vs the no-op baseline's 11/12 |
+| PRD FR6 — corpus expansion | NOT ATTEMPTED | Separate data-acquisition track |
+
+## The fabrication defect (most important item in this session)
+
+`generateComplianceMap` in `query-pipeline.ts` was fabricating its entire
+output and rendering it to users as fact in the Product Compliance Map
+panel:
+
+- a hardcoded `"ISI Mark Scheme (Scheme-I)"` / `"Mandatory (QCO Active)"`
+  certification row on **every** result, whatever the standard
+- two invented test names against invented clause numbers
+  (`"Section 4.1"`, `"Section 5"`)
+- a laboratory list with coordinates from `Math.random()`, plotted on a
+  Leaflet map and captioned "capable of testing against the identified
+  standards"
+
+This violated this project's own "no invented clauses, certification
+routes, testing requirements" rule and the PRD's zero-fabrication NFR. It
+also contradicted the rest of the codebase, which is careful about exactly
+this: `map-provider.ts` refuses to return fabricated coordinates, and
+`find-laboratories` refuses to claim a per-standard capability match.
+
+Now `src/lib/compliance-map.ts`, reading the fact-checked reference dataset
+and nothing else, matched on exact standard number **including edition**.
+Unsourceable fields were removed from the type rather than filled with
+plausible values. Standards with no reference entry are reported as
+`unmatchedStandards` and the panel says so, because an empty section must
+not read as "no certification required". 8 regression tests against the
+real dataset (`src/lib/compliance-map.test.ts`).
+
+Per the project owner's decision, the laboratory map was removed rather
+than re-pinned: the recognised-laboratory dataset has no coordinates and no
+per-standard testing scope, so there was no honest map to draw. The Labs
+tab now fetches the real directory from `/api/v1/laboratories` and states
+that it is *not* filtered by the standards above.
+`LaboratoryMap.tsx`/`LaboratoryMapInner.tsx` deleted; `leaflet` and
+`react-leaflet` are now unused dependencies.
+
+## Defect caught by the new refusal eval
+
+The out-of-corpus query "turbine blade coatings for aircraft jet engines"
+returned the fixed "not found in the indexed corpus" answer while still
+marking IS 15636:2012, IS 13428:2005 and IS 14756:2017 as
+`primaryRecommendation` — refusal prose sitting directly above three
+confident recommendation cards. Cause: the applicability gate runs per
+candidate and never saw the pipeline-level refusal. A forced refusal now
+demotes every candidate to `INSUFFICIENT_EVIDENCE`. Verified fixed on a
+later live run (Hindi refusals now list no primary standards at all).
+
+## Latency
+
+Measured end to end across the 12-query refusal eval, on both providers:
+
+| Provider | median | max | over the 10s target |
+|---|---|---|---|
+| Local Ollama `llama3.2:3b` (Tier 0) | 6.9s | 12.2s | 2/12 |
+| Gemini free tier (remote) | 16.2s | 80.4s | 7/12 |
+
+The NFR is essentially met by the architecture and missed by one provider.
+Gemini takes 20-35s per structured call and the pipeline makes up to three
+(translate, intent, synthesis); some calls also fail JSON parsing and retry
+through a second code path, doubling that call's cost.
+
+A structural fix landed on the way to these numbers: the pipeline was
+generating an LLM answer **and then discarding it** on every below-floor
+refusal — 106s and 82s for two out-of-corpus queries whose entire output is
+a fixed string. `generateAnswer` now takes `skipSynthesis`, set once the
+floor has decided the outcome; that cut one of those from 106s to 26s on
+Gemini and makes refusal the cheapest path rather than the dearest.
+
+## Multilingual parity — measured on the Tier-0 local provider
+
+Final numbers (local Ollama `llama3.2:3b`, `LOCAL_LLM_TIMEOUT_MS=90000`):
+
+| Metric | Result |
+|---|---|
+| Hindi detected | 5/5 |
+| Hindi translated to English before retrieval | 5/5 |
+| Answer written in Hindi | 5/5 |
+| Identifiers left in Latin script (PRD §7) | 5/5 |
+| Strict parity (identical primary standards + same outcome) | 3/5 |
+| Partial parity (Hindi retrieved at least one of the English standards) | 4/5 |
+
+The §7 language contract holds completely. Strict grounding parity does
+not, and that is a real gap — though narrower than 3/5 suggests: on the
+failures the Hindi side generally retrieves the correct standard and
+differs in the surrounding candidate set, because translation rewords the
+query and reranking then sees a slightly different field. The numbers also
+move between runs (2/5 then 3/5 strict on identical input) because a 3B
+model translates nondeterministically. A stronger translation model is the
+obvious next lever; the harness now exists to measure whether it helps.
+
+Two earlier runs produced numbers that looked like product failures and
+were not — both worth knowing about:
+
+- **Unpaced against Gemini: 0/5.** All five Hindi runs reported
+  `translated=false`. The free tier is capped at 20 `generate_content`
+  requests, and one 429 puts the provider in a 60s cooldown
+  (`COOLDOWN_MS`, `src/lib/providers/router.ts`). Translation is the
+  *first* call each request makes, so it is the call that consistently
+  absorbs that cooldown while later calls in the same request find it
+  expired — exactly how a spent quota disguises itself as "translation is
+  broken". Confirmed by calling the translation path in isolation, where it
+  returned a correct English translation immediately.
+- **Local Ollama at the default timeout: 1/5.** Translation succeeded only
+  2/5, failing with `timeout: no response within 15000ms`. A CPU-bound 3B
+  model needs more than the 15s default; `LOCAL_LLM_TIMEOUT_MS` is already
+  operator-tunable, so no code change was required.
+
+Both eval scripts now pace themselves (`EVAL_PACE_MS`) and the multilingual
+one reports translation success separately from parity, so an
+infrastructure failure cannot be read as a product failure again.
+
+One product improvement came out of this: when translation is unavailable
+the pipeline still retrieves on the untranslated text and the relevance
+floor turns that noise into a refusal — correct, but the generic "not found
+in the indexed corpus" wording blamed the corpus for what was an
+unavailable translation step. The pipeline now adds an explicit limitation,
+in English or Hindi, saying which it was.
+
+## Re-run obligations
+
+The relevance floor is calibrated for the current corpus and embedding
+configuration only. After any corpus or embedding change, re-run
+`npm run eval:refusal-threshold` and check the recorded numbers in
+`data/evaluation/refusal-calibration.json` before trusting the floor.
+
+## Multilingual: Marathi + Bengali extension (2026-09-16)
+
+Extended the fully-supported answer-language set from English+Hindi to also
+include Marathi and Bengali — `src/lib/language.ts`'s `AnswerLanguage`
+widened, `src/lib/refusal.ts` gained real `MR`/`BN` copy blocks,
+`scripts/eval-multilingual.ts` restructured from a fixed English/Hindi pair
+to N languages. `translate.ts` and `answer.ts` needed **zero** code changes
+— both were already generic over `AnswerLanguage`, so the only real gaps
+were the hardcoded `hi` check in `language.ts` and the missing refusal copy.
+
+**Verified this session**: `npm run verify` green (579 vitest tests, up
+from 570; lint/typecheck/build clean), then a real live `npm run
+eval:multilingual` run once `DATABASE_URL`/`OPENROUTER_API_KEY` became
+available partway through the session (`openai/gpt-4o-mini` via
+OpenRouter). Results (`data/evaluation/multilingual-parity-results.json`):
+
+| Language | Strict parity | Partial parity | Detected/translated/answered-in-language/identifiers-Latin |
+|---|---|---|---|
+| Hindi | 3/5 | 5/5 | 5/5 on all four |
+| Marathi | 3/5 | 4/5 | 5/5 on all four |
+| Bengali | 4/5 | 5/5 | 5/5 on all four |
+
+Marathi/Bengali perform in the same range as the already-shipped Hindi
+baseline — every §7 contract check (detection, translation, answering in
+the right language, citations never mistranslated) is 5/5 for all three
+languages; the weaker "strict parity" number matches Hindi's own
+pre-existing, already-documented pattern (translation rewords the query,
+shifting reranking on the margins), not a new regression. The
+Marathi/Bengali copy itself is LLM-authored and still flagged in-code for
+a native-speaker check — the live eval verifies pipeline *behavior*, not
+that every word is idiomatic.
+
+**Merged same day with a teammate's parallel work** (`upstream/master`,
+commit `b2dcf81`): a teammate independently extended these same files to
+all 8 UI languages and found a real bug this session's narrower 4-language
+version didn't have (a script-neutral English query with a non-English
+toggle was mistranslated — fixed by keying translation-for-retrieval on
+the actually-detected script, not the resolved toggle value). Reconciled
+in favor of their version: `AnswerLanguage` is no longer a restricted
+allowlist, every language now gets real translate-in/answer-in-language
+treatment, and this session's unreviewed Marathi/Bengali refusal copy was
+dropped in favor of their more conservative `REFUSAL_COPY_LANGUAGES`
+pattern — only English/Hindi have reviewed fixed refusal text; every other
+language gets an explicit, user-visible "shown in English because a
+reviewed translation doesn't exist yet" note instead. Live-verified after
+merging: a Marathi refusal correctly carries that note, and a Tamil query
+correctly detects/translates/retrieves/answers end to end
+(`IS 14543:2016`, packaged drinking water). `npm run verify` green (612
+tests) after reconciliation.

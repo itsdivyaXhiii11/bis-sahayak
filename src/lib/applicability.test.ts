@@ -1,0 +1,257 @@
+import { describe, test, expect } from "vitest";
+import { assessApplicability, detectMaterialFamily, deriveRecommendationStatus } from "./applicability";
+import type { CoverageResult } from "./coverage-analysis";
+import type { GroundingState } from "./grounding";
+
+function coverage(overrides: Partial<CoverageResult> = {}): CoverageResult {
+  return {
+    product: "unknown",
+    material: "unknown",
+    application: "unknown",
+    targetUser: "unknown",
+    sector: "unknown",
+    testing: "unknown",
+    certification: "unknown",
+    identifier: "unknown",
+    overallCoverageRatio: 1,
+    ...overrides,
+  };
+}
+
+describe("detectMaterialFamily", () => {
+  test("finds steel from 'steel bottle'", () => {
+    expect(detectMaterialFamily("steel bottle")).toBe("steel");
+  });
+  test("finds plastic from a standard title", () => {
+    expect(detectMaterialFamily("Plastics Bottles/Containers for Packaged Natural Mineral Water")).toBe("plastic");
+  });
+  test("returns null for text with no known material", () => {
+    expect(detectMaterialFamily("pressure cooker safety requirements")).toBeNull();
+  });
+  test("returns null for null/empty input", () => {
+    expect(detectMaterialFamily(null)).toBeNull();
+    expect(detectMaterialFamily("")).toBeNull();
+  });
+});
+
+describe("assessApplicability", () => {
+  test("steel query vs plastic-titled standard -> MATERIAL_MISMATCH, even with high grounding/coverage", () => {
+    const result = assessApplicability({
+      query: "steel bottle for drinking water",
+      intentMaterial: null,
+      candidateTitle: "Plastics Bottles/Containers for Packaged Natural Mineral Water and Packaged Drinking Water",
+      coverage: coverage({ product: "covered", overallCoverageRatio: 1 }),
+      groundingState: "verified",
+    });
+    expect(result.state).toBe("MATERIAL_MISMATCH");
+    expect(result.materialConflict).toBe(true);
+    expect(result.reason).toContain("steel");
+    expect(result.reason).toContain("plastic");
+  });
+
+  test("uses structured intent.material over a raw-query guess when both are present", () => {
+    const result = assessApplicability({
+      query: "container for water, steel preferred",
+      intentMaterial: "stainless steel",
+      candidateTitle: "Plastics Bottles/Containers Specification",
+      coverage: coverage(),
+      groundingState: "verified",
+    });
+    expect(result.state).toBe("MATERIAL_MISMATCH");
+  });
+
+  test("no material mentioned anywhere -> not a mismatch, falls through to grounding-based state", () => {
+    const result = assessApplicability({
+      query: "domestic pressure cooker",
+      intentMaterial: null,
+      candidateTitle: "Domestic Pressure Cooker",
+      coverage: coverage({ product: "covered", overallCoverageRatio: 1 }),
+      groundingState: "verified",
+    });
+    expect(result.state).toBe("DIRECTLY_APPLICABLE");
+    expect(result.materialConflict).toBe(false);
+  });
+
+  test("same material family on both sides -> no mismatch", () => {
+    const result = assessApplicability({
+      query: "stainless steel utensils",
+      intentMaterial: "steel",
+      candidateTitle: "Stainless Steel Sheets and Strips for Utensils",
+      coverage: coverage({ product: "covered", overallCoverageRatio: 1 }),
+      groundingState: "verified",
+    });
+    expect(result.state).toBe("DIRECTLY_APPLICABLE");
+  });
+
+  test("insufficient_evidence grounding always wins over a would-be DIRECTLY_APPLICABLE coverage shape", () => {
+    const result = assessApplicability({
+      query: "pressure cooker",
+      intentMaterial: null,
+      candidateTitle: "Domestic Pressure Cooker",
+      coverage: coverage({ product: "covered", overallCoverageRatio: 1 }),
+      groundingState: "insufficient_evidence",
+    });
+    expect(result.state).toBe("INSUFFICIENT_EVIDENCE");
+  });
+
+  test("material mismatch takes priority even over insufficient_evidence grounding", () => {
+    const result = assessApplicability({
+      query: "steel bottle",
+      intentMaterial: null,
+      candidateTitle: "Plastics Bottles/Containers Specification",
+      coverage: coverage(),
+      groundingState: "insufficient_evidence",
+    });
+    expect(result.state).toBe("MATERIAL_MISMATCH");
+  });
+
+  test("no product coverage and low overall ratio -> SCOPE_UNCLEAR, not silently applicable", () => {
+    const result = assessApplicability({
+      query: "helmet for construction workers",
+      intentMaterial: null,
+      candidateTitle: "Domestic Pressure Cooker",
+      coverage: coverage({ product: "not_covered", overallCoverageRatio: 0.1 }),
+      groundingState: "supported_inference",
+    });
+    expect(result.state).toBe("SCOPE_UNCLEAR");
+  });
+
+  test("REGRESSION (live E2E defect, 2026-09-03): verified grounding with NO product/material stated anywhere -> RELATED, never DIRECTLY_APPLICABLE/high-confidence", () => {
+    // The exact bug: a nonsense query with no extractable product/material
+    // (the common no-LLM case) previously satisfied a bare
+    // overallCoverageRatio >= 0.6 check (vacuously 1.0 when nothing was
+    // asked) and was reported as high-confidence/directly-applicable for
+    // real standards it has no actual basis to endorse that strongly.
+    const result = assessApplicability({
+      query: "xyzzy-nonexistent-product-qqq",
+      intentMaterial: null,
+      candidateTitle: "Packaged Drinking Water (Other than Packaged Natural Mineral Water)",
+      coverage: coverage({ overallCoverageRatio: 1 }), // product/identifier both "unknown" — nothing was actually confirmed
+      groundingState: "verified",
+    });
+    expect(result.state).toBe("RELATED");
+    expect(result.state).not.toBe("DIRECTLY_APPLICABLE");
+  });
+
+  test("an exact standard-number query (identifier covered) is DIRECTLY_APPLICABLE even with no product/material text", () => {
+    const result = assessApplicability({
+      query: "IS 14543:2016",
+      intentMaterial: null,
+      candidateTitle: "Packaged Drinking Water (Other than Packaged Natural Mineral Water)",
+      coverage: coverage({ identifier: "covered", overallCoverageRatio: 1 }),
+      groundingState: "verified",
+    });
+    expect(result.state).toBe("DIRECTLY_APPLICABLE");
+  });
+
+  test("supported_inference with decent coverage and no conflict -> POTENTIALLY_APPLICABLE", () => {
+    const result = assessApplicability({
+      query: "helmet",
+      intentMaterial: null,
+      candidateTitle: "Protective Helmet for Two Wheeler Riders",
+      coverage: coverage({ product: "covered", overallCoverageRatio: 0.7 }),
+      groundingState: "supported_inference",
+    });
+    expect(result.state).toBe("POTENTIALLY_APPLICABLE");
+  });
+
+  // 2026-09-04 bug: "I want to manufacture steel pipes" surfaced the real,
+  // ingested IS 4985:2021 (Unplasticized PVC Pipes) as a primary
+  // recommendation labeled "High relevance" / "Directly supported by
+  // evidence", despite assessApplicability already correctly detecting a
+  // material mismatch — nothing downstream ever consulted that result.
+  // Uses the real title text from the standards table, not a fabricated one.
+  test("HARD NEGATIVE — steel query vs the real IS 4985:2021 (PVC pipes) title -> MATERIAL_MISMATCH", () => {
+    const result = assessApplicability({
+      query: "I want to manufacture steel pipes",
+      intentMaterial: null,
+      candidateTitle: "Unplasticized Polyvinyl Chloride (PVC-U) Pipes for Potable Water Supplies - Specification",
+      coverage: coverage({ product: "covered", overallCoverageRatio: 1 }),
+      groundingState: "verified",
+    });
+    expect(result.state).toBe("MATERIAL_MISMATCH");
+    expect(result.materialConflict).toBe(true);
+  });
+});
+
+describe("deriveRecommendationStatus", () => {
+  function applicability(overrides: Partial<ReturnType<typeof assessApplicability>> = {}) {
+    return { state: "DIRECTLY_APPLICABLE" as const, reason: "", materialConflict: false, ...overrides };
+  }
+
+  test("HARD NEGATIVE (the exact reported bug): a material mismatch is never a primary recommendation, regardless of grounding", () => {
+    const app = assessApplicability({
+      query: "I want to manufacture steel pipes",
+      intentMaterial: null,
+      candidateTitle: "Unplasticized Polyvinyl Chloride (PVC-U) Pipes for Potable Water Supplies - Specification",
+      coverage: coverage({ product: "covered", overallCoverageRatio: 1 }),
+      groundingState: "verified", // strong grounding on its own — must not matter
+    });
+    const gate = deriveRecommendationStatus(app, "verified", false);
+    expect(gate.primary).toBe(false);
+    expect(gate.status).toBe("RELATED_BUT_NOT_APPLICABLE");
+  });
+
+  test("POSITIVE CONTROL: a real steel standard (IS 5522:2014's actual title) with confirmed applicability IS a primary recommendation", () => {
+    const app = assessApplicability({
+      query: "I want to manufacture steel utensils",
+      intentMaterial: "steel",
+      candidateTitle: "Stainless Steel Sheets and Strips for Utensils", // real ingested standard's real title
+      coverage: coverage({ product: "covered", overallCoverageRatio: 1 }),
+      groundingState: "verified",
+    });
+    expect(app.state).toBe("DIRECTLY_APPLICABLE");
+    const gate = deriveRecommendationStatus(app, "verified", false);
+    expect(gate.primary).toBe(true);
+    expect(gate.status).toBe("RECOMMENDED");
+  });
+
+  test("a version/evidence conflict affecting this standard -> CONFLICTING_EVIDENCE, not primary, even with no material issue", () => {
+    const gate = deriveRecommendationStatus(applicability({ state: "DIRECTLY_APPLICABLE" }), "verified", true);
+    expect(gate.status).toBe("CONFLICTING_EVIDENCE");
+    expect(gate.primary).toBe(false);
+  });
+
+  test("insufficient_evidence grounding -> INSUFFICIENT_EVIDENCE, not primary, even with no material issue", () => {
+    const gate = deriveRecommendationStatus(applicability({ state: "DIRECTLY_APPLICABLE" }), "insufficient_evidence", false);
+    expect(gate.status).toBe("INSUFFICIENT_EVIDENCE");
+    expect(gate.primary).toBe(false);
+  });
+
+  test("SCOPE_UNCLEAR applicability -> INSUFFICIENT_EVIDENCE, not primary", () => {
+    const gate = deriveRecommendationStatus(applicability({ state: "SCOPE_UNCLEAR" }), "supported_inference", false);
+    expect(gate.status).toBe("INSUFFICIENT_EVIDENCE");
+    expect(gate.primary).toBe(false);
+  });
+
+  test("materialConflict takes priority over every other signal (categorical gate, not a blended score)", () => {
+    // Even with strong grounding and no other issue, materialConflict alone is decisive.
+    const gate = deriveRecommendationStatus(applicability({ state: "MATERIAL_MISMATCH", materialConflict: true }), "verified", false);
+    expect(gate.status).toBe("RELATED_BUT_NOT_APPLICABLE");
+    expect(gate.primary).toBe(false);
+  });
+
+  test("POTENTIALLY_APPLICABLE with supported_inference grounding and no conflict IS a primary recommendation (soft signal, not blocked)", () => {
+    const gate = deriveRecommendationStatus(applicability({ state: "POTENTIALLY_APPLICABLE" }), "supported_inference", false);
+    expect(gate.status).toBe("RECOMMENDED");
+    expect(gate.primary).toBe(true);
+  });
+
+  test("RELATED (no material signal available at all) is not disqualified — still a primary candidate", () => {
+    const gate = deriveRecommendationStatus(applicability({ state: "RELATED" }), "verified", false);
+    expect(gate.status).toBe("RECOMMENDED");
+    expect(gate.primary).toBe(true);
+  });
+
+  test("every RecommendationStatus other than RECOMMENDED implies primary=false, and only RECOMMENDED implies primary=true", () => {
+    const cases: Array<[ReturnType<typeof assessApplicability>, GroundingState, boolean]> = [
+      [applicability({ state: "MATERIAL_MISMATCH", materialConflict: true }), "verified", false],
+      [applicability({ state: "DIRECTLY_APPLICABLE" }), "verified", true], // conflict
+      [applicability({ state: "INSUFFICIENT_EVIDENCE" }), "insufficient_evidence", false],
+    ];
+    for (const [app, grounding, hasConflict] of cases) {
+      const gate = deriveRecommendationStatus(app, grounding, hasConflict);
+      expect(gate.primary).toBe(gate.status === "RECOMMENDED");
+    }
+  });
+});

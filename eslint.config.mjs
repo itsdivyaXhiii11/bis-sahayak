@@ -1,0 +1,32 @@
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    // Not part of the source tree — generated Playwright HTML report
+    // (gitignored, but a local run leaves it on disk and its minified
+    // vendor JS bundles otherwise get linted as if they were source).
+    "playwright-report/**",
+    "test-results/**",
+    // Local Python virtualenv (gitignored) — its site-packages ship
+    // minified JS that would otherwise be linted as source.
+    ".venv/**",
+    ".venv-ml/**",
+    // Fine-tuned model artifacts (scripts/ml-finetune/) — tokenizer.json
+    // ships as one giant single-line JSON file that ESLint otherwise
+    // tries to parse as JS/TS, the same class of bug .venv/** guards
+    // against above.
+    "data/ml/artifacts/**",
+  ]),
+]);
+
+export default eslintConfig;

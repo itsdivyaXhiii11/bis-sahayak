@@ -1,0 +1,119 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { runQueryPipeline } from "@/lib/query-pipeline";
+import { classifyChatIntent, resolveScopedContext, buildScopedAnswer } from "@/lib/chat-context";
+import { detectLanguage, resolveQueryLanguage } from "@/lib/language";
+import { rateLimitOrNull } from "@/lib/rate-limit-http";
+import { getDb } from "@/db";
+import { queryLogs } from "@/db/schema";
+
+/** PRD FR13: chat turns are queries too — log them, never blocking the response on it. */
+async function logChatTurn(fields: {
+  message: string;
+  subIntent: string;
+  outcome: string;
+  latencyMs: number;
+}): Promise<void> {
+  if (!process.env.DATABASE_URL) return;
+  try {
+    await getDb().insert(queryLogs).values({
+      query: fields.message,
+      intent: `chat:${fields.subIntent}`,
+      retrievedChunkIds: [],
+      latencyMs: fields.latencyMs,
+      outcome: fields.outcome,
+    });
+  } catch (err) {
+    console.warn("[api/v1/chat] queryLogs insert failed:", err);
+  }
+}
+
+/**
+ * "Discuss these results" (P0 audit, 2026-09-03). The client sends only
+ * stable identifiers (standardNumbers from its last query response) plus
+ * the new message — never trusted factual content like a "reason" or
+ * evidence string, which the audit found the old chat implementation
+ * effectively re-trusted by string-concatenating it into a second global
+ * search. Every field in the response below is resolved server-side from
+ * `standardNumbers`, or — only when the message explicitly asks for
+ * broader discovery — from a fresh run of the same global pipeline
+ * /api/v1/query uses. The scope actually used is always reported back in
+ * `scope`, so a caller never has to guess which one produced the answer.
+ */
+const ChatRequestSchema = z.object({
+  originalQuery: z.string().min(1).max(2000),
+  standardNumbers: z.array(z.string().min(1)).max(10).default([]),
+  message: z.string().min(1).max(1000),
+});
+
+// Chat can trigger a full pipeline run (wider search) or a handful of DB
+// reads (scoped) — budgeted like /query, not like /search.
+const RATE_LIMIT = { limit: 20, windowMs: 60_000 };
+
+export async function POST(req: NextRequest) {
+  const limited = rateLimitOrNull(req, "chat", RATE_LIMIT);
+  if (limited) return limited;
+
+  const parsed = ChatRequestSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 });
+  }
+  const { originalQuery, standardNumbers, message } = parsed.data;
+
+  const started = Date.now();
+  try {
+    const subIntent = classifyChatIntent(message);
+
+    // With no standardNumbers there is no "current results" to scope to at
+    // all (the site-wide chat widget, opened from a page with no active
+    // search) -- resolveScopedContext([]) would always come back empty and
+    // buildScopedAnswer would always say "not enough evidence in the
+    // current results," which is a dead end for a real question rather
+    // than an honest refusal. Route straight to the same global pipeline
+    // /api/v1/query uses instead of forcing every general question to
+    // match classifyChatIntent's "wider_search" phrasing pattern first.
+    if (subIntent === "wider_search" || standardNumbers.length === 0) {
+      const result = await runQueryPipeline(message);
+      await logChatTurn({ message, subIntent, outcome: result.outcome ?? "answered", latencyMs: Date.now() - started });
+      return NextResponse.json({
+        scope: "global",
+        scopeChangeNotice: "This requires searching beyond your current results.",
+        subIntent,
+        ...result,
+      });
+    }
+
+    // §7: a chat follow-up gets the same language treatment as the initial
+    // query — script-detected, no LLM needed for detection itself. Only
+    // buildFreeformAnswer's LLM branch can actually honor a non-English
+    // request; the deterministic template branches always answer "en"
+    // regardless (see ScopedAnswer.answerLanguage's doc comment) — the
+    // response's answerLanguage always reflects which really happened.
+    const { answerLanguage: requestedLanguage } = resolveQueryLanguage(undefined, detectLanguage(message));
+
+    const scoped = await resolveScopedContext(standardNumbers);
+    const scopedAnswer = await buildScopedAnswer(subIntent, originalQuery, message, scoped, requestedLanguage);
+    await logChatTurn({
+      message,
+      subIntent,
+      outcome: (scopedAnswer.evidence?.length ?? 0) > 0 ? "answered" : "refused_insufficient_evidence",
+      latencyMs: Date.now() - started,
+    });
+
+    return NextResponse.json({
+      scope: "current_results",
+      subIntent,
+      answer: scopedAnswer.answer,
+      evidence: scopedAnswer.evidence,
+      limitations: scopedAnswer.limitations,
+      answerLanguage: scopedAnswer.answerLanguage,
+      resolvedStandards: scoped.map((s) => s.standardNumber),
+    });
+  } catch (err) {
+    console.error("[api/v1/chat]", err);
+    return NextResponse.json(
+      { error: "Chat processing failed", message: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
+}
